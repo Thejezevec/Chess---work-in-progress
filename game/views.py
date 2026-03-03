@@ -1,13 +1,13 @@
 from django.shortcuts import render, redirect
 from .forms import GameForm
-from .models import Game
+from .models import Game, Move
 from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 import json
 import chess
 
-    #chess notation into unicode figures
+#chess notation into unicode figures
 UNICODE_PIECES = {
     'K': '♔', 'Q': '♕', 'R': '♖', 'B': '♗', 'N': '♘', 'P': '♙',
     'k': '♚', 'q': '♛', 'r': '♜', 'b': '♝', 'n': '♞', 'p': '♟︎',
@@ -78,19 +78,35 @@ def make_move(request, game_id):
     move = chess.Move.from_uci(move_uci)
 
     if move in board.legal_moves:
+        piece = board.piece_at(chess.parse_square(from_square))
+        san_notation = board.san(move)
+        current_player = 'white' if board.turn == chess.WHITE else 'black'
         board.push(move)
         game.board_state = board.fen()
+        
+        if board.is_checkmate():
+            game.winner = current_player
+        elif board.is_stalemate() or board.is_insufficient_material() or board.can_claim_fifty_moves() or board.can_claim_threefold_repetition():
+            game.is_draw = True
+        
         game.save()
 
         Move.objects.create(
             game=game,
-            player='white' if board.turn == chess.BLACK else 'black',
-            move=board.san(move),
+            player=current_player,
+            move=san_notation,
             from_square=from_square,
             to_square=to_square,
-            piece=str(board.piece_at(chess.parse_square(from_square)))
-        )
+            piece=str(piece if piece else '')
+        )   
 
-        return JsonResponse({'success': True, 'new_fen': game.board_state})
+        return JsonResponse({
+            'success': True, 
+            'new_fen': game.board_state,
+            'winner': game.winner,
+            'is_draw': game.is_draw,
+            'is_checkmate': board.is_checkmate(),
+            'is_check': board.is_check()
+            })
     else:
         return JsonResponse({'error': 'Invalid move'}, status=400)

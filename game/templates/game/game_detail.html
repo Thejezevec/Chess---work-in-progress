@@ -22,90 +22,28 @@
         .dark {
             background-color: #b58863;
         }
+        td.selected {
+            outline: 3px solid red;
+        }
+        #status {
+            front-size: 18px;
+            front-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+        }
     </style>
-<script>
-    let from = null;
-
-    function squareClicked(td) {
-        const coord = td.dataset.coord;
-        console.log("Clicked:", coord);
-
-        if (!from) {
-            from = coord;
-            td.style.outline = "2px solid red";
-        } else {
-            const to = coord;
-            alert(`move from ${from} to ${to}`);
-            from = null;
-
-            document.querySelectorAll("td").forEach(cell => {
-                cell.style.outline = "";
-            });
-        }
-    }
-
-    console.log("JavaScript is loaded");
-</script>
-<script>
-let from = null;
-const gameId = "{{ game.id }}";
-
-function squareClicked(td) {
-    const coord = td.dataset.coord;
-    console.log("Clicked:", coord);
-
-    if (!from) {
-        from = coord;
-        td.style.outline = "2px solid red";
-    } else {
-        const to = coord;
-        fetch(`/game/${gameId}/move/`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getcookie('csrftoken')
-    },
-            body: JSON.stringify({ from: from, to: to })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                alert(`Moved from ${from} to ${to}`);
-                location.reload(); // Reload the page to update the board
-            } else {
-                alert('Invalid move');
-            }
-        })
-        .catch(error => console.error('Error:', error));
-
-        from = null;
-
-        document.querySelectorAll("td").forEach(cell => {
-            cell.style.outline = "";
-        });
-    }
-}
-
-function getcookie(name) {
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-        const cookies = document.cookie.split(';');
-        for(let i = 0; i < cookies.lenght; i++) {
-            const cookie = cookies[i].trim();
-            if (cookie.startsWith(name + '=')) {
-                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                break;
-            }
-        }
-    }
-    return cookieValue;
-}
-</script>
-
 </head>
 <body>
 
 <h1>{{ game.player_white }} vs {{ game.player_black }}</h1>
+
+{% if game.winner %}
+    <p id="status">Winner: {{ game.winner }}</p>
+{% elif game.is_draw %}
+    <p id="status">Game is a draw</p>
+{% else %}
+    <p id="status">Game in progress</p>
+{% endif %}
 
 <table>
   {% for row in board %}
@@ -113,7 +51,7 @@ function getcookie(name) {
       {% for square in row.squares %}
          <td data-coord="{{ square.col_letter }}{{ row.row_num }}"
                 onclick="squareClicked(this)"
-                class="{% if forloop.parentloop.counter0|add:forloop.counter0|divisibleby:2 %}light{% else %}dark{% endif %}">
+                class="{{ square.color }}">
                 {{ square.value }}
         </td>
       {% endfor %}
@@ -121,6 +59,68 @@ function getcookie(name) {
   {% endfor %}
 </table>
 
+
+<script>
+    let selectedSquare = null;
+    const gameId = "{{ game.id }}";
+
+    function squareClicked(td) {
+        const coord = td.dataset.coord;
+
+        if (!selectedSquare) {
+            // First click — select the square
+            selectedSquare = coord;
+            td.classList.add('selected');
+        } else {
+            // Second click — attempt move
+            const from = selectedSquare;
+            const to = coord;
+
+            // Deselect
+            document.querySelectorAll("td.selected").forEach(cell => cell.classList.remove('selected'));
+            selectedSquare = null;
+
+            if (from === to) return; // clicked same square
+
+            fetch(`/game/${gameId}/move/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({ from: from, to: to })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    if (data.is_checkmate) {
+                        alert(`Šach mat! Vyhrál: ${data.winner}`);
+                    } else if (data.is_draw) {
+                        alert('Remíza!');
+                    }
+                    location.reload();
+                } else {
+                    alert('Neplatný tah: ' + (data.error || ''));
+                }
+            })
+            .catch(error => console.error('Chyba při tahu:', error));
+        }
+    }
+
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            for (const cookie of document.cookie.split(';')) {
+                const trimmed = cookie.trim();
+                if (trimmed.startsWith(name + '=')) {
+                    cookieValue = decodeURIComponent(trimmed.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+</script>
 
 </body>
 </html>
