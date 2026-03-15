@@ -1,4 +1,8 @@
+from urllib import request
+
 from django.shortcuts import render, redirect
+
+import game
 from .forms import GameForm
 from .models import Game, Move
 from django.shortcuts import get_object_or_404
@@ -25,7 +29,6 @@ def new_game(request):
                 board_state='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
             )
             return redirect('game_detail', game_id=game.id)
-
     else:
         form = GameForm()
     
@@ -52,14 +55,23 @@ def game_detail(request, game_id):
         row_data = {
             'row_num': 8 - row_index,
             'squares': [
-                {'col_letter': chr(ord('a') + col_index), 'value': square}
+                {
+                    'col_letter': chr(ord('a') + col_index), 'value': square, 
+                    'color': 'light' if (row_index + col_index) % 2 == 0 else 'dark'
+                }
                 for col_index, square in enumerate(expanded_row)
             ]
         }
         board.append(row_data)
-        
 
-    return render(request, 'game/game_detail.html', {'game': game, 'board':board})
+    all_moves = list(game.moves.order_by('timestamp'))
+    moves = []
+    for i in range(0, len(all_moves), 2):
+        white_move = all_moves[i].move
+        black_move = all_moves[i+1].move if i + 1 < len(all_moves) else ''
+        moves.append({'number': (i // 2) + 1, 'white': white_move, 'black': black_move})        
+
+    return render(request, 'game/game_detail.html', {'game': game, 'board': board, 'moves': moves})
 
 
 def make_move(request, game_id):
@@ -69,12 +81,15 @@ def make_move(request, game_id):
         data = json.loads(request.body)
         from_square = data.get('from')
         to_square = data.get('to')
+        promotion = data.get('promotion')
     except (KeyError, json.JSONDecodeError):
         return JsonResponse({'error': 'Invalid data'}, status=400)
     
     board = chess.Board(game.board_state)
 
     move_uci = from_square + to_square
+    if promotion and promotion in ['q', 'r', 'b', 'n']:
+        move_uci += promotion
     move = chess.Move.from_uci(move_uci)
 
     if move in board.legal_moves:
@@ -84,6 +99,7 @@ def make_move(request, game_id):
         board.push(move)
         game.board_state = board.fen()
         
+        # Check for game end conditions
         if board.is_checkmate():
             game.winner = current_player
         elif board.is_stalemate() or board.is_insufficient_material() or board.can_claim_fifty_moves() or board.can_claim_threefold_repetition():

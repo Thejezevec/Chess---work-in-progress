@@ -4,39 +4,92 @@
     <meta charset="UTF-8">
     <title>{{game.player_white}} vs {{game.player_black}}</title>
     <style>
-        table{
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #7a7456;
+            padding: 20px;
+        }
+        #game-layout {
+            display: flex;
+            gap: 30px;
+            align-items: flex-start;
+        }
+        table {
             border-collapse: collapse;
             margin: 20px 0;
         }
         td {
-            width:40px;
+            width: 40px;
             height: 40px;
             text-align: center;
             vertical-align: middle;
             border: 1px solid #000;
             font-size: 24px;
+            cursor: pointer;
+            user-select: none;
         }
-        .light {
-            background-color: #f0d9b5;
-        }
-        .dark {
-            background-color: #b58863;
-        }
-        td.selected {
-            outline: 3px solid red;
-        }
+        .light { background-color: #f0d9b5; }
+        .dark  { background-color: #b58863; }
+        td.selected { outline: 3px solid red; }
+ 
         #status {
-            front-size: 18px;
-            front-weight: bold;
+            font-size: 18px;
+            font-weight: bold;
             margin-bottom: 10px;
             color: #333;
         }
+ 
+        /* Move history */
+        #move-history {
+            margin-top: 20px;
+            min-width: 180px;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            padding: 12px;
+            background: #fafafa;
+        }
+        #move-history h3 { margin: 0 0 10px 0; font-size: 16px; color: #555; }
+        .move-row { display: flex; gap: 8px; padding: 3px 0; font-size: 15px; border-bottom: 1px solid #eee; }
+        .move-number { color: #999; min-width: 24px; }
+        .move-white  { min-width: 60px; }
+        .move-black  { color: #444; }
+ 
+        /* Promotion modal — skrytý dokud není potřeba */
+        #promotion-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+        #promotion-modal.active { display: flex; }
+        .promotion-box {
+            background: #fff;
+            border-radius: 10px;
+            padding: 24px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        }
+        .promotion-box h2 { margin-bottom: 16px; font-size: 18px; }
+        .promotion-options { display: flex; gap: 12px; justify-content: center; }
+        .promotion-options button {
+            width: 70px; height: 80px; font-size: 36px; cursor: pointer;
+            border: 2px solid #ccc; border-radius: 8px; background: #f9f9f9;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 3px; line-height: 1;
+        }
+        .promotion-options button span { font-size: 20px; color: #111111; }
+        .promotion-options button:hover { background: #e0e0e0; border-color: #888; }
     </style>
 </head>
 <body>
-
+ 
 <h1>{{ game.player_white }} vs {{ game.player_black }}</h1>
-
+ 
 {% if game.winner %}
     <p id="status">Winner: {{ game.winner }}</p>
 {% elif game.is_draw %}
@@ -44,83 +97,137 @@
 {% else %}
     <p id="status">Game in progress</p>
 {% endif %}
-
-<table>
-  {% for row in board %}
-    <tr>
-      {% for square in row.squares %}
-         <td data-coord="{{ square.col_letter }}{{ row.row_num }}"
-                onclick="squareClicked(this)"
-                class="{{ square.color }}">
-                {{ square.value }}
-        </td>
-      {% endfor %}
-    </tr>
-  {% endfor %}
-</table>
-
-
+ 
+<!-- Promotion modal -->
+<div id="promotion-modal">
+    <div class="promotion-box">
+        <h2>What do you want to promote the pawn to?</h2>
+        <div class="promotion-options">
+            <button onclick="choosePromotion('q')"><span>♛</span><span class="label">Queen</span></button>
+            <button onclick="choosePromotion('r')"><span>♜</span><span class="label">Rook</span></button>
+            <button onclick="choosePromotion('b')"><span>♝</span><span class="label">Bishop</span></button>
+            <button onclick="choosePromotion('n')"><span>♞</span><span class="label">Knight</span></button>
+        </div>
+    </div>
+</div>
+ 
+<div id="game-layout">
+    <table>
+        {% for row in board %}
+            <tr>
+                {% for square in row.squares %}
+                    <td data-coord="{{ square.col_letter }}{{ row.row_num }}"
+                        class="{{ square.color }}"
+                        onclick="squareClicked(this)">{{ square.value }}
+                    </td>
+                {% endfor %}
+            </tr>
+        {% endfor %}
+    </table>
+ 
+    <div id="move-history">
+        <h3>Move History</h3>
+        {% if moves %}
+            {% for move in moves %}
+                <div class="move-row">
+                    <span class="move-number">{{ move.number }}.</span>
+                    <span class="move-white">{{ move.white }}</span>
+                    <span class="move-black">{{ move.black }}</span>
+                </div>
+            {% endfor %}
+        {% else %}
+            <p>No moves yet.</p>
+        {% endif %}
+    </div>
+</div>
+ 
 <script>
     let selectedSquare = null;
+    let pendingMove = null;
     const gameId = "{{ game.id }}";
-
+ 
+    // Scroll move history to bottom
+    const historyEl = document.getElementById('move-history');
+    historyEl.scrollTop = historyEl.scrollHeight;
+ 
+    function isPromotion(from, to) {
+        const fromTd = document.querySelector(`td[data-coord="${from}"]`);
+        const piece = fromTd ? fromTd.textContent.trim() : '';
+        const toRank = to[1];
+        // Board uses unicode pieces, not letters
+        if (piece === '♙' && toRank === '8') return true;  // white pawn
+        if (piece === '♟︎' && toRank === '1') return true;  // black pawn
+        return false;
+    }
+ 
     function squareClicked(td) {
         const coord = td.dataset.coord;
-
+ 
         if (!selectedSquare) {
-            // First click — select the square
+            // First click — select square
             selectedSquare = coord;
             td.classList.add('selected');
         } else {
             // Second click — attempt move
             const from = selectedSquare;
             const to = coord;
-
-            // Deselect
+ 
             document.querySelectorAll("td.selected").forEach(cell => cell.classList.remove('selected'));
             selectedSquare = null;
-
-            if (from === to) return; // clicked same square
-
-            fetch(`/game/${gameId}/move/`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCookie('csrftoken')
-                },
-                body: JSON.stringify({ from: from, to: to })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    if (data.is_checkmate) {
-                        alert(`Šach mat! Vyhrál: ${data.winner}`);
-                    } else if (data.is_draw) {
-                        alert('Remíza!');
-                    }
-                    location.reload();
-                } else {
-                    alert('Neplatný tah: ' + (data.error || ''));
-                }
-            })
-            .catch(error => console.error('Chyba při tahu:', error));
-        }
-    }
-
-    function getCookie(name) {
-        let cookieValue = null;
-        if (document.cookie && document.cookie !== '') {
-            for (const cookie of document.cookie.split(';')) {
-                const trimmed = cookie.trim();
-                if (trimmed.startsWith(name + '=')) {
-                    cookieValue = decodeURIComponent(trimmed.substring(name.length + 1));
-                    break;
-                }
+ 
+            if (from === to) return;
+ 
+            if (isPromotion(from, to)) {
+                pendingMove = { from, to };
+                document.getElementById('promotion-modal').classList.add('active');
+            } else {
+                sendMove(from, to, null);
             }
         }
-        return cookieValue;
+    }
+ 
+    function choosePromotion(piece) {
+        document.getElementById('promotion-modal').classList.remove('active');
+        if (pendingMove) {
+            sendMove(pendingMove.from, pendingMove.to, piece);
+            pendingMove = null;
+        }
+    }
+ 
+    function sendMove(from, to, promotion) {
+        const body = { from, to };
+        if (promotion) body.promotion = promotion;
+ 
+        fetch(`/game/${gameId}/move/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(body)
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                if (data.is_checkmate) alert(`Checkmate! Winner: ${data.winner}`);
+                else if (data.is_draw) alert('Draw!');
+                location.reload();
+            } else {
+                alert('Invalid move: ' + (data.error || ''));
+            }
+        })
+        .catch(err => console.error('Error:', err));
+    }
+ 
+    function getCookie(name) {
+        for (const cookie of document.cookie.split(';')) {
+            const trimmed = cookie.trim();
+            if (trimmed.startsWith(name + '='))
+                return decodeURIComponent(trimmed.substring(name.length + 1));
+        }
+        return null;
     }
 </script>
-
+ 
 </body>
 </html>
